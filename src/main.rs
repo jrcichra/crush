@@ -18,20 +18,23 @@ fn main() {
     }
 
     // simulate the placement of n pgs with replica: 3
-    let num_of_pgs = 1;
+    let num_of_pgs = 10;
     let replicas = 3;
 
     let mut count: HashMap<String, u32> = HashMap::<String, u32>::new();
     for pg in 1..=num_of_pgs {
-        let locations = c.select(pg, replicas);
-        // println!("locations for pg {}: {:?}", pg, &locations);
-        for location in locations {
-            if count.contains_key(&location) {
-                *count.get_mut(&location).unwrap() += 1;
-            } else {
-                count.insert(location, 1);
+        let racks = c.select(pg, replicas, "");
+        let mut placement = vec![];
+
+        for rack in racks {
+            let hosts = c.select(pg, 1, &rack);
+            for host in hosts {
+                let osds = c.select(pg, 1, &format!("{}/{}", rack, host));
+                placement.push(format!("{}/{}/{}", rack, host, osds[0]))
             }
         }
+
+        println!("pg {} will be placed on: {:?}", pg, placement);
     }
 
     // print the spread

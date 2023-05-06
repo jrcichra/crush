@@ -1,7 +1,10 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use core::hash::{Hash, Hasher};
+use core::{
+    hash::{Hash, Hasher},
+    panic,
+};
 use std::collections::hash_map::DefaultHasher;
 
 lazy_static::lazy_static! {
@@ -23,6 +26,7 @@ pub struct Crush {
 struct Node {
     weight: u64,
     out: bool,
+    _type: String,
     children: BTreeMap<String, Node>,
 }
 
@@ -34,7 +38,7 @@ impl Crush {
 
     /// Locate a node by `pgid`.
     pub fn locate(&self, pgid: u32) -> String {
-        self.select(pgid, 1).into_iter().next().unwrap()
+        self.select(pgid, 1, "/").into_iter().next().unwrap()
     }
 
     /// Return the total weight of the cluster.
@@ -57,12 +61,20 @@ impl Crush {
         self.root.get(path).out
     }
 
+    fn get_node_by_path(&self, path: &str) -> &Node {
+        self.root.get(path)
+    }
+
     /// Select `num` targets accoding to `pgid`.
-    pub fn select(&self, pgid: u32, num: u32) -> Vec<String> {
+    pub fn select(&self, pgid: u32, num: u32, start_path: &str) -> Vec<String> {
         let mut targets = Vec::<String>::new();
         let mut failure_count = 0;
+
+        // determine the node we should start with based on the path.
+        let start = self.get_node_by_path(start_path);
+
         for r in 0..num {
-            let mut node = &self.root;
+            let mut node = start;
             let mut local_failure = 0;
             let mut fullname = String::new();
             loop {
@@ -72,10 +84,10 @@ impl Crush {
                 }
                 fullname += name;
                 let child = &node.children[name];
-                if !child.children.is_empty() {
-                    node = child;
-                    continue;
-                }
+                // if !child.children.is_empty() {
+                //     node = child;
+                //     continue;
+                // }
                 if !child.out && !targets.contains(&fullname) {
                     // found one
                     break;
@@ -83,7 +95,7 @@ impl Crush {
                 // chop off the failed node from the fullname
                 fullname = fullname
                     .strip_suffix(&format!("/{}", name))
-                    .unwrap()
+                    .unwrap_or_default()
                     .to_string();
 
                 failure_count += 1;
