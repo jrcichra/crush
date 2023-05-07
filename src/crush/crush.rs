@@ -250,6 +250,46 @@ mod tests {
     }
 
     #[test]
+    fn single_diverse_and_spread() {
+        let num_of_pgs = 10000;
+        let replicas = 3;
+
+        let osds = 5;
+
+        let c = build_single_node_cluster(osds);
+        let mut count = HashMap::new();
+
+        for pg in 1..=num_of_pgs {
+            let osds = c.select(pg, replicas, "");
+            let mut placement = vec![];
+            for osd in osds {
+                placement.push(osd);
+            }
+
+            // put all the pg placements into a hashmap for counting spread
+            for p in &placement {
+                if let Some(x) = count.get_mut(p) {
+                    *x += 1;
+                } else {
+                    count.insert(p.clone(), 1);
+                }
+            }
+
+            // validate each pg is in three unique hosts
+            let set: HashSet<String> = placement.into_iter().collect();
+            assert!(set.len() == 3);
+        }
+
+        let exact_percentage = 100.0 / osds as f64;
+
+        // make sure the actual is within a percent of the theoretical
+        for (_, c) in count {
+            let actual_percentage = c as f64 / (num_of_pgs * replicas) as f64 * 100.0;
+            assert!(actual_percentage - exact_percentage < 1.0);
+        }
+    }
+
+    #[test]
     fn ha_diverse_and_spread() {
         // simulate a replicas: 3 cluster with a failure domain of "host" in a homelab environment
         let num_of_pgs = 10000;
