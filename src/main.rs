@@ -1,5 +1,5 @@
 mod crush;
 
 fn main() {
-    println!("Run 'cargo test' instead")
+    println!("No main code yet. Run 'cargo test' instead")
 }
