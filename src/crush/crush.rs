@@ -1,10 +1,7 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use core::{
-    hash::{Hash, Hasher},
-    panic,
-};
+use core::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 lazy_static::lazy_static! {
@@ -30,6 +27,16 @@ struct Node {
     children: BTreeMap<String, Node>,
 }
 
+// https://www.techiedelight.com/round-next-highest-power-2/
+fn find_next_power_of_2(n: u32) -> u32 {
+    let mut n = n;
+    n -= 1;
+    while n & n - 1 != 0 {
+        n = n & n - 1;
+    }
+    n << 1
+}
+
 impl Crush {
     /// Add weight to a node.
     pub fn add_weight(&mut self, path: &str, weight: i64) {
@@ -38,7 +45,48 @@ impl Crush {
 
     /// Locate a node by `pgid`.
     pub fn locate(&self, pgid: u32) -> String {
-        self.select(pgid, 1, "/").into_iter().next().unwrap()
+        let mut path = String::new();
+        while !path.contains("osd") {
+            let select = self.select(pgid, 1, &path).into_iter().next().unwrap();
+            if path == "" {
+                path = select;
+            } else {
+                path = format!("{}/{}", path, select);
+            }
+        }
+        path
+    }
+
+    pub fn get_osds(&self, node: &Node) -> u32 {
+        // returns the number of osds from the given node
+        let mut count = 0;
+        for (name, child) in &node.children {
+            if name.contains("osd") {
+                count += 1;
+            } else {
+                count += self.get_osds(child);
+            }
+        }
+        count
+    }
+
+    // https://docs.ceph.com/en/latest/rados/operations/placement-groups/#choosing-the-number-of-placement-groups
+    pub fn get_recommended_pgs(&self, replicas: u32) -> u32 {
+        find_next_power_of_2(self.get_osds(&self.root) * 100 / replicas)
+    }
+
+    pub fn locate_all(&self, pgid: u32, replicas: u32) -> Vec<String> {
+        let mut paths = self.select(pgid, replicas, "");
+        for p in paths.iter_mut() {
+            while !p.contains("osd") {
+                let select = self.select(pgid, 1, p);
+                for s in select {
+                    *p = format!("{}/{}", p, s);
+                }
+            }
+        }
+        paths.sort();
+        paths
     }
 
     /// Return the total weight of the cluster.
@@ -84,10 +132,6 @@ impl Crush {
                 }
                 fullname += name;
                 let child = &node.children[name];
-                // if !child.children.is_empty() {
-                //     node = child;
-                //     continue;
-                // }
                 if !child.out && !targets.contains(&fullname) {
                     // found one
                     break;
@@ -97,7 +141,6 @@ impl Crush {
                     .strip_suffix(&format!("/{}", name))
                     .unwrap_or_default()
                     .to_string();
-
                 failure_count += 1;
                 local_failure += 1;
                 if local_failure > 3 {
@@ -165,56 +208,10 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
-
     use super::*;
     use alloc::format;
-    use rand::Rng;
-
-    // /// Generate a 9*9*9*10 cluster map.
-    // fn gen_test_map() -> Crush {
-    //     // let mut rng = rand::thread_rng();
-    //     let mut crush = Crush::default();
-    //     for i in 0..9 {
-    //         for j in 0..9 {
-    //             for k in 0..9 {
-    //                 for l in 0..10 {
-    //                     let path = path_from_nums(i, j, k, l);
-    //                     // let weight = rng.gen_range(1..5);
-    //                     crush.add_weight(&path, 1);
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     crush
-    // }
-
-    // fn path_from_nums(i: usize, j: usize, k: usize, l: usize) -> String {
-    //     let row = i;
-    //     let rack = row * 9 + j;
-    //     let host = rack * 9 + k;
-    //     let osd = host * 9 + l;
-    //     format!("row.{row}/rack.{rack}/host.{host}/osd.{osd}")
-    // }
-
-    // #[test]
-    // fn basic_balance() {
-    //     let crush = gen_test_map();
-    //     let mut count = BTreeMap::<String, u32>::new();
-    //     let n = 1000000;
-    //     for i in 0..n {
-    //         let path = crush.locate(i);
-    //         *count.entry(path).or_default() += 1;
-    //     }
-    //     let avg = n / (9 * 9 * 9 * 10);
-    //     for (name, count) in count {
-    //         let range = avg / 2..avg * 2;
-    //         assert!(
-    //             range.contains(&count),
-    //             "path {name:?} count {count} out of range {range:?}"
-    //         );
-    //     }
-    // }
+    use core::num;
+    use std::collections::{HashMap, HashSet};
 
     fn build_single_node_cluster(osds: u32) -> Crush {
         let mut c = Crush::default();
@@ -389,61 +386,57 @@ mod tests {
         }
     }
 
-    // /// test distribute on insert
-    // #[test]
-    // fn move_factor_add() {
-    //     let mut crush = gen_test_map();
-    //     let crush0 = crush.clone();
-    //     let mut rng = rand::thread_rng();
+    #[test]
+    fn move_factor_add() {
+        // a 3-node cluster with 5 disks per node
+        // gets a new server provisioned because the company needs more storage
+        // the final topology is a 4-node cluster with 5 disks per node
 
-    //     // random choose 10 OSDs, add weight to them
-    //     for _ in 0..10 {
-    //         let i = rng.gen_range(0..9);
-    //         let j = rng.gen_range(0..9);
-    //         let k = rng.gen_range(0..9);
-    //         let l = rng.gen_range(0..10);
-    //         let path = path_from_nums(i, j, k, l);
-    //         let weight = rng.gen_range(1..5);
-    //         crush.add_weight(&path, weight as i64);
-    //     }
+        let hosts = 30;
+        let osds = 50;
 
-    //     let n = 1000000;
-    //     let move_count = (0..n)
-    //         .filter(|&i| crush0.locate(i) != crush.locate(i))
-    //         .count();
-    //     let shift_weight = crush.total_weight() - crush0.total_weight();
-    //     let move_fator =
-    //         (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
-    //     assert!(move_fator < 4.0, "move factor {move_fator} should < 4");
-    // }
+        let num_of_pgs = 10000;
+        let replicas = 3;
 
-    // /// test distribute on remove
-    // #[test]
-    // fn move_factor_remove() {
-    //     let mut crush = gen_test_map();
-    //     let crush0 = crush.clone();
-    //     let mut rng = rand::thread_rng();
+        let before_crush = build_ha_cluster(hosts, osds);
+        let mut after_crush = before_crush.clone();
 
-    //     // shut down around 90 osds
-    //     let mut shift_weight = 0;
-    //     for _ in 0..90 {
-    //         let i = rng.gen_range(0..9);
-    //         let j = rng.gen_range(0..9);
-    //         let k = rng.gen_range(0..9);
-    //         let l = rng.gen_range(0..10);
-    //         let path = path_from_nums(i, j, k, l);
-    //         if !crush.get_inout(&path) {
-    //             crush.set_inout(&path, true);
-    //             shift_weight += crush.get_weight(&path);
-    //         }
-    //     }
+        // add in fourth node to the "after" crush map
 
-    //     let n = 1000000;
-    //     let move_count = (0..n)
-    //         .filter(|&i| crush0.locate(i) != crush.locate(i))
-    //         .count();
-    //     let move_factor =
-    //         (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
-    //     assert!(move_factor < 1.5, "move factor {move_factor} should < 1.5");
-    // }
+        for i in 1..=osds {
+            after_crush.add_weight(&format!("host.4/osd.{}", i), 1);
+        }
+
+        let mut moved = 0;
+        for pg in 1..=num_of_pgs {
+            let before_locate = before_crush.locate_all(pg, replicas);
+            let after_locate = after_crush.locate_all(pg, replicas);
+
+            if before_locate != after_locate {
+                println!("before: {:?}, after: {:?}", before_locate, after_locate);
+                moved += 1;
+            }
+        }
+        println!(
+            "moved: {} out of {} pgs, which is {}%",
+            moved,
+            num_of_pgs,
+            moved as f64 / num_of_pgs as f64 * 100.0
+        );
+    }
+
+    #[test]
+    fn recommended_pgs() {
+        // does the recommended number of PGs match the example formula in the ceph documentation?
+        // https://docs.ceph.com/en/latest/rados/operations/placement-groups/#choosing-the-number-of-placement-groups
+
+        // total of 200 OSDs
+        let racks = 5;
+        let hosts = 5;
+        let osds = 8;
+
+        let crush = build_datacenter_cluster(racks, hosts, osds);
+
+        assert_eq!(crush.get_recommended_pgs(3), 8192);
+    }
 }
