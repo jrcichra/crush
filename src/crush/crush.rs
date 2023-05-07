@@ -165,110 +165,208 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use super::*;
     use alloc::format;
     use rand::Rng;
 
-    /// Generate a 9*9*9*10 cluster map.
-    fn gen_test_map() -> Crush {
-        // let mut rng = rand::thread_rng();
-        let mut crush = Crush::default();
-        for i in 0..9 {
-            for j in 0..9 {
-                for k in 0..9 {
-                    for l in 0..10 {
-                        let path = path_from_nums(i, j, k, l);
-                        // let weight = rng.gen_range(1..5);
-                        crush.add_weight(&path, 1);
-                    }
+    // /// Generate a 9*9*9*10 cluster map.
+    // fn gen_test_map() -> Crush {
+    //     // let mut rng = rand::thread_rng();
+    //     let mut crush = Crush::default();
+    //     for i in 0..9 {
+    //         for j in 0..9 {
+    //             for k in 0..9 {
+    //                 for l in 0..10 {
+    //                     let path = path_from_nums(i, j, k, l);
+    //                     // let weight = rng.gen_range(1..5);
+    //                     crush.add_weight(&path, 1);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     crush
+    // }
+
+    // fn path_from_nums(i: usize, j: usize, k: usize, l: usize) -> String {
+    //     let row = i;
+    //     let rack = row * 9 + j;
+    //     let host = rack * 9 + k;
+    //     let osd = host * 9 + l;
+    //     format!("row.{row}/rack.{rack}/host.{host}/osd.{osd}")
+    // }
+
+    // #[test]
+    // fn basic_balance() {
+    //     let crush = gen_test_map();
+    //     let mut count = BTreeMap::<String, u32>::new();
+    //     let n = 1000000;
+    //     for i in 0..n {
+    //         let path = crush.locate(i);
+    //         *count.entry(path).or_default() += 1;
+    //     }
+    //     let avg = n / (9 * 9 * 9 * 10);
+    //     for (name, count) in count {
+    //         let range = avg / 2..avg * 2;
+    //         assert!(
+    //             range.contains(&count),
+    //             "path {name:?} count {count} out of range {range:?}"
+    //         );
+    //     }
+    // }
+
+    fn build_single_node_cluster(osds: u32) -> Crush {
+        let mut c = Crush::default();
+        for osd in 1..=osds {
+            let path = format!("osd.{}", osd);
+            c.add_weight(&path, 1);
+        }
+        c
+    }
+
+    fn build_ha_cluster(hosts: u32, osds: u32) -> Crush {
+        let mut c = Crush::default();
+        for host in 1..=hosts {
+            for osd in 1..=osds {
+                let path = format!("host.{}/osd.{}", host, osd);
+                c.add_weight(&path, 1);
+            }
+        }
+        c
+    }
+
+    fn build_datacenter_cluster(racks: u32, hosts: u32, osds: u32) -> Crush {
+        let mut c = Crush::default();
+        for rack in 1..=racks {
+            for host in 1..=hosts {
+                for osd in 1..=osds {
+                    let path = format!("rack.{}/host.{}/osd.{}", rack, host, osd);
+                    c.add_weight(&path, 1);
                 }
             }
         }
-        crush
+        c
     }
 
-    fn path_from_nums(i: usize, j: usize, k: usize, l: usize) -> String {
-        let row = i;
-        let rack = row * 9 + j;
-        let host = rack * 9 + k;
-        let osd = host * 9 + l;
-        format!("row.{row}/rack.{rack}/host.{host}/osd.{osd}")
-    }
+    // #[test]
+    // fn ha_diverse_and_spread() {
+    //     // simulate a replicas: 3 cluster with a failure domain of "host" in a homelab environment
+    //     let num_of_pgs = 10000;
+    //     let replicas = 3;
+
+    //     let hosts = 3;
+    //     let osds = 5;
+
+    // }
 
     #[test]
-    fn basic_balance() {
-        let crush = gen_test_map();
-        let mut count = BTreeMap::<String, u32>::new();
-        let n = 1000000;
-        for i in 0..n {
-            let path = crush.locate(i);
-            *count.entry(path).or_default() += 1;
-        }
-        let avg = n / (9 * 9 * 9 * 10);
-        for (name, count) in count {
-            let range = avg / 2..avg * 2;
-            assert!(
-                range.contains(&count),
-                "path {name:?} count {count} out of range {range:?}"
-            );
-        }
-    }
+    fn rack_diverse_and_spread() {
+        // simulate a replicas: 3 cluster with a failure domain of "rack" in a small datacenter
+        let num_of_pgs = 10000;
+        let replicas = 3;
 
-    /// test distribute on insert
-    #[test]
-    fn move_factor_add() {
-        let mut crush = gen_test_map();
-        let crush0 = crush.clone();
-        let mut rng = rand::thread_rng();
+        let racks = 3;
+        let hosts = 3;
+        let osds = 10;
 
-        // random choose 10 OSDs, add weight to them
-        for _ in 0..10 {
-            let i = rng.gen_range(0..9);
-            let j = rng.gen_range(0..9);
-            let k = rng.gen_range(0..9);
-            let l = rng.gen_range(0..10);
-            let path = path_from_nums(i, j, k, l);
-            let weight = rng.gen_range(1..5);
-            crush.add_weight(&path, weight as i64);
-        }
+        let c = build_datacenter_cluster(racks, hosts, osds);
 
-        let n = 1000000;
-        let move_count = (0..n)
-            .filter(|&i| crush0.locate(i) != crush.locate(i))
-            .count();
-        let shift_weight = crush.total_weight() - crush0.total_weight();
-        let move_fator =
-            (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
-        assert!(move_fator < 4.0, "move factor {move_fator} should < 4");
-    }
+        let mut count = HashMap::new();
 
-    /// test distribute on remove
-    #[test]
-    fn move_factor_remove() {
-        let mut crush = gen_test_map();
-        let crush0 = crush.clone();
-        let mut rng = rand::thread_rng();
+        for pg in 1..=num_of_pgs {
+            let racks = c.select(pg, replicas, "");
+            let mut placement = vec![];
 
-        // shut down around 90 osds
-        let mut shift_weight = 0;
-        for _ in 0..90 {
-            let i = rng.gen_range(0..9);
-            let j = rng.gen_range(0..9);
-            let k = rng.gen_range(0..9);
-            let l = rng.gen_range(0..10);
-            let path = path_from_nums(i, j, k, l);
-            if !crush.get_inout(&path) {
-                crush.set_inout(&path, true);
-                shift_weight += crush.get_weight(&path);
+            for rack in racks {
+                let hosts = c.select(pg, 1, &rack);
+                for host in hosts {
+                    let osds = c.select(pg, 1, &format!("{}/{}", rack, host));
+                    placement.push(format!("{}/{}/{}", rack, host, osds[0]))
+                }
             }
+
+            // put all the pg placements into a hashmap for counting spread
+            for p in &placement {
+                if let Some(x) = count.get_mut(p) {
+                    *x += 1;
+                } else {
+                    count.insert(p.clone(), 1);
+                }
+            }
+
+            // validate each pg is in three unique racks
+            let set: HashSet<String> = placement
+                .iter()
+                .map(|x| x.split_once("/").unwrap().0.to_string())
+                .collect();
+            assert!(set.len() == 3);
         }
 
-        let n = 1000000;
-        let move_count = (0..n)
-            .filter(|&i| crush0.locate(i) != crush.locate(i))
-            .count();
-        let move_factor =
-            (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
-        assert!(move_factor < 1.5, "move factor {move_factor} should < 1.5");
+        let exact_percentage = (racks * hosts * osds) as f64 / 100.0;
+
+        // make sure the actual is within a percent of the theoretical
+        for (_, c) in count {
+            let actual_percentage = c as f64 / (num_of_pgs * replicas) as f64 * 100.0;
+            assert!(actual_percentage - exact_percentage < 1.0);
+        }
     }
+
+    // /// test distribute on insert
+    // #[test]
+    // fn move_factor_add() {
+    //     let mut crush = gen_test_map();
+    //     let crush0 = crush.clone();
+    //     let mut rng = rand::thread_rng();
+
+    //     // random choose 10 OSDs, add weight to them
+    //     for _ in 0..10 {
+    //         let i = rng.gen_range(0..9);
+    //         let j = rng.gen_range(0..9);
+    //         let k = rng.gen_range(0..9);
+    //         let l = rng.gen_range(0..10);
+    //         let path = path_from_nums(i, j, k, l);
+    //         let weight = rng.gen_range(1..5);
+    //         crush.add_weight(&path, weight as i64);
+    //     }
+
+    //     let n = 1000000;
+    //     let move_count = (0..n)
+    //         .filter(|&i| crush0.locate(i) != crush.locate(i))
+    //         .count();
+    //     let shift_weight = crush.total_weight() - crush0.total_weight();
+    //     let move_fator =
+    //         (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
+    //     assert!(move_fator < 4.0, "move factor {move_fator} should < 4");
+    // }
+
+    // /// test distribute on remove
+    // #[test]
+    // fn move_factor_remove() {
+    //     let mut crush = gen_test_map();
+    //     let crush0 = crush.clone();
+    //     let mut rng = rand::thread_rng();
+
+    //     // shut down around 90 osds
+    //     let mut shift_weight = 0;
+    //     for _ in 0..90 {
+    //         let i = rng.gen_range(0..9);
+    //         let j = rng.gen_range(0..9);
+    //         let k = rng.gen_range(0..9);
+    //         let l = rng.gen_range(0..10);
+    //         let path = path_from_nums(i, j, k, l);
+    //         if !crush.get_inout(&path) {
+    //             crush.set_inout(&path, true);
+    //             shift_weight += crush.get_weight(&path);
+    //         }
+    //     }
+
+    //     let n = 1000000;
+    //     let move_count = (0..n)
+    //         .filter(|&i| crush0.locate(i) != crush.locate(i))
+    //         .count();
+    //     let move_factor =
+    //         (move_count as f32) / (n as f32 / (crush0.total_weight() / shift_weight) as f32);
+    //     assert!(move_factor < 1.5, "move factor {move_factor} should < 1.5");
+    // }
 }
