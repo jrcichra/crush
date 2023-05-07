@@ -210,7 +210,6 @@ impl Node {
 mod tests {
     use super::*;
     use alloc::format;
-    use core::num;
     use std::collections::{HashMap, HashSet};
 
     fn build_single_node_cluster(osds: u32) -> Crush {
@@ -392,8 +391,8 @@ mod tests {
         // gets a new server provisioned because the company needs more storage
         // the final topology is a 4-node cluster with 5 disks per node
 
-        let hosts = 30;
-        let osds = 50;
+        let hosts = 3;
+        let osds = 5;
 
         let num_of_pgs = 16_384;
         let replicas = 3;
@@ -417,12 +416,14 @@ mod tests {
                 moved += 1;
             }
         }
+        let moved_percentage = moved as f64 / num_of_pgs as f64 * 100.0;
         println!(
             "moved: {} out of {} pgs, which is {}%",
-            moved,
-            num_of_pgs,
-            moved as f64 / num_of_pgs as f64 * 100.0
+            moved, num_of_pgs, moved_percentage
         );
+        // for now, make sure we move less than 80% of data within a placement group
+        // when adding a fourth node to a previously 3 node 3 replica cluster, the % of pg's affected is fairly significant
+        assert!(moved_percentage < 80.0);
     }
 
     #[test]
