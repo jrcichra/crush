@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn single_diverse_and_spread() {
-        let num_of_pgs = 10000;
+        let num_of_pgs = 16_384;
         let replicas = 3;
 
         let osds = 5;
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn ha_diverse_and_spread() {
         // simulate a replicas: 3 cluster with a failure domain of "host" in a homelab environment
-        let num_of_pgs = 10000;
+        let num_of_pgs = 16_384;
         let replicas = 3;
 
         let hosts = 3;
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn rack_diverse_and_spread() {
         // simulate a replicas: 3 cluster with a failure domain of "rack" in a small datacenter
-        let num_of_pgs = 10000;
+        let num_of_pgs = 16_384;
         let replicas = 3;
 
         let racks = 3;
@@ -395,7 +395,7 @@ mod tests {
         let hosts = 30;
         let osds = 50;
 
-        let num_of_pgs = 10000;
+        let num_of_pgs = 16_384;
         let replicas = 3;
 
         let before_crush = build_ha_cluster(hosts, osds);
