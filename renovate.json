@@ -1,0 +1,3 @@
+{
+  "extends": ["github>jrcichra/renovate-config"]
+}
